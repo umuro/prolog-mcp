@@ -1,0 +1,25 @@
+{
+  "name": "prolog-mcp",
+  "version": "0.1.0",
+  "description": "MCP server wrapping SWI-Prolog for symbolic reasoning in coding agents",
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "bin": { "prolog-mcp": "./dist/index.js" },
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "zod": "^3.0.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0",
+    "vitest": "^2.0.0",
+    "@types/node": "^22.0.0"
+  }
+}
