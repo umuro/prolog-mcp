@@ -31,3 +31,22 @@ jobs:
         run: |
           sudo apt-get install -y swi-prolog
           npm test
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t prolog-mcp .
+
+      - name: Smoke test — node and swipl present
+        run: |
+          docker run --rm --entrypoint node prolog-mcp -e "console.log('node ok')"
+          docker run --rm --entrypoint swipl prolog-mcp --version
+
+      - name: Smoke test — MCP initialize over stdio
+        run: |
+          printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"ci","version":"0"}}}\n' \
+            | timeout 15 docker run -i --rm -e KB_DIR=/tmp/prolog-mcp prolog-mcp \
+            | grep -q '"serverInfo"'

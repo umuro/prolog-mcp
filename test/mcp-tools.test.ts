@@ -7,6 +7,8 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 
+const MCP_SWIPL_PORT = 17575;  // distinct from prolog-http.test.ts (17474)
+
 function hasSwipl() {
   const r = spawnSync("swipl", ["--version"], { stdio: "ignore" });
   return r.status === 0;
@@ -75,6 +77,7 @@ class McpTestClient {
 // ---------------------------------------------------------------------------
 let client: McpTestClient;
 let mcpProc: ReturnType<typeof spawn>;
+let swiplProc: ReturnType<typeof spawn> | null = null;
 let tmpDir: string;
 
 beforeAll(async () => {
@@ -85,24 +88,32 @@ beforeAll(async () => {
   fs.mkdirSync(path.join(tmpDir, "scratch"));
   fs.writeFileSync(path.join(tmpDir, "core.pl"), "% e2e test core\n");
 
+  // Pre-start swipl on a dedicated port so the MCP node process finds it
+  // immediately and autoRestartSwipl's health check resolves without hanging.
+  swiplProc = spawn("swipl", ["-q", path.resolve("prolog/server.pl")], {
+    env: { ...process.env, SWIPL_PORT: String(MCP_SWIPL_PORT), KB_DIR: tmpDir },
+  });
+  swiplProc.stderr!.on("data", () => { /* suppress swipl startup noise */ });
+  await new Promise((r) => setTimeout(r, 2000)); // let swipl bind its port
+
   mcpProc = spawn("node", ["dist/index.js"], {
     env: {
       ...process.env,
       KB_DIR: tmpDir,
-      SWIPL_PORT: "7474", // use already-running daemon
+      SWIPL_PORT: String(MCP_SWIPL_PORT),
     },
     stdio: ["pipe", "pipe", "pipe"],
   });
-
   mcpProc.stderr!.on("data", () => { /* suppress */ });
 
   client = new McpTestClient(mcpProc);
-  await new Promise((r) => setTimeout(r, 1000));
+  await new Promise((r) => setTimeout(r, 500));
   await client.initialize();
-}, 15_000);
+}, 20_000);
 
 afterAll(() => {
   mcpProc?.kill();
+  swiplProc?.kill();
   if (tmpDir) fs.rmSync(tmpDir, { recursive: true });
 });
 

@@ -22,11 +22,15 @@ export class PrologHttp {
   }
 
   async health(): Promise<boolean> {
+    const controller = new AbortController();
+    const id = setTimeout(() => controller.abort(), 2000);
     try {
-      const res = await fetch(`${this.baseUrl}/health`);
+      const res = await fetch(`${this.baseUrl}/health`, { signal: controller.signal });
       return res.ok;
     } catch {
       return false;
+    } finally {
+      clearTimeout(id);
     }
   }
 

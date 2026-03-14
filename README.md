@@ -49,6 +49,8 @@ Layer files are the source of truth — reloaded on daemon restart. Facts writte
 
 ## Prerequisites
 
+> **Skip prerequisites with Docker** — if you have Docker installed you can run prolog-mcp without installing SWI-Prolog or Node.js locally. See [Docker](#docker) below.
+
 ### SWI-Prolog 9.x
 
 **macOS (Homebrew):**
@@ -106,6 +108,45 @@ npm run build
 ```
 
 After `npm run build`, `dist/` is populated. The KB directory (`~/.local/share/prolog-mcp`) is created automatically on first run with subdirectories `agents/`, `sessions/`, and `scratch/`.
+
+---
+
+## Docker
+
+No SWI-Prolog or Node.js installation required — the image bundles both.
+
+**Build:**
+```bash
+docker build -t prolog-mcp .
+```
+
+**Run (MCP over stdio):**
+```bash
+docker run -i --rm \
+  -v "$HOME/.local/share/prolog-mcp:/data/prolog-mcp" \
+  prolog-mcp
+```
+
+- `-i` keeps stdin open for the MCP stdio transport.
+- `-v` mounts your KB directory so facts persist between container runs. Omit it for an ephemeral, in-container KB.
+
+**Register with Claude Desktop (Docker variant):**
+```json
+{
+  "mcpServers": {
+    "prolog": {
+      "command": "docker",
+      "args": [
+        "run", "-i", "--rm",
+        "-v", "/Users/you/.local/share/prolog-mcp:/data/prolog-mcp",
+        "prolog-mcp"
+      ]
+    }
+  }
+}
+```
+
+The swipl daemon is started automatically inside the container by the Node.js process on first tool call (`autoRestartSwipl: true`).
 
 ---
 
