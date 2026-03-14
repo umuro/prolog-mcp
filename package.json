@@ -3,24 +3,31 @@
   "version": "0.1.0",
   "description": "MCP server wrapping SWI-Prolog for symbolic reasoning in coding agents",
   "type": "module",
-  "engines": { "node": ">=22" },
-  "bin": { "prolog-mcp": "./dist/index.js" },
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "prolog-mcp": "./dist/index.js"
+  },
   "main": "./dist/index.js",
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint src/ --deny-warnings",
+    "lint:fix": "oxlint src/ --fix"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
     "zod": "^3.0.0"
   },
   "devDependencies": {
+    "@types/node": "^22.0.0",
+    "oxlint": "^1.55.0",
     "tsx": "^4.0.0",
     "typescript": "^5.0.0",
-    "vitest": "^2.0.0",
-    "@types/node": "^22.0.0"
+    "vitest": "^2.0.0"
   }
 }
