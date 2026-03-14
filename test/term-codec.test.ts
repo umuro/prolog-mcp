@@ -24,4 +24,8 @@ describe("termToString", () => {
   it("rejects empty string", () => {
     expect(() => termToString("")).toThrow("invalid_term");
   });
+
+  it("rejects null bytes", () => {
+    expect(() => termToString("foo\0bar")).toThrow("invalid_term");
+  });
 });
