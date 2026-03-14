@@ -35,7 +35,10 @@ export function loadConfig(): Config {
     ...fileConfig,
     ...(process.env.KB_DIR ? { kbDir: process.env.KB_DIR } : {}),
     ...(process.env.SWIPL_PORT
-      ? { swiplPort: parseInt(process.env.SWIPL_PORT, 10) }
+      ? (() => {
+          const p = parseInt(process.env.SWIPL_PORT!, 10);
+          return Number.isFinite(p) ? { swiplPort: p } : {};
+        })()
       : {}),
   };
 
