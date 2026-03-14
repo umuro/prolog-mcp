@@ -137,8 +137,12 @@ handle_list(Req) :-
           ( clause(H, _), term_string(H, S) ),
           All)
     ),
-    length(All, Total),
+    ( get_dict(offset, Body, Offset) -> true ; Offset = 0 ),
+    ( Offset > 0, length(All, AllLen), AllLen >= Offset ->
+        length(Skip, Offset), append(Skip, Paged, All)
+    ;   Paged = All ),
+    length(Paged, Total),
     ( Total > Limit ->
-        length(Trunc, Limit), append(Trunc, _, All),
+        length(Trunc, Limit), append(Trunc, _, Paged),
         reply_json_dict(_{facts: Trunc, truncated: true})
-    ;   reply_json_dict(_{facts: All, truncated: false}) ).
+    ;   reply_json_dict(_{facts: Paged, truncated: false}) ).

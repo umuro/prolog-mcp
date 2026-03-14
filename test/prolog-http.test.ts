@@ -82,6 +82,37 @@ describe.skipIf(SKIP)("PrologHttp integration", () => {
     // core facts (parent/2) should NOT appear
     expect(r.facts.some((f: string) => f.includes("parent"))).toBe(false);
   });
+
+  it("listFacts with offset skips leading facts", async () => {
+    // assert 3 distinct facts into a fresh session layer
+    await http.assert("pag(1)", "session:pagination");
+    await http.assert("pag(2)", "session:pagination");
+    await http.assert("pag(3)", "session:pagination");
+    const all = await http.listFacts({ layer: "session:pagination" }) as any;
+    expect(all.facts.length).toBe(3);
+    const paged = await http.listFacts({ layer: "session:pagination", offset: 2 }) as any;
+    expect(paged.facts.length).toBe(1);
+  });
+
+  it("retracts facts and returns removed count", async () => {
+    await http.assert("color(sky, blue)", "session:retracttest");
+    await http.assert("color(sea, blue)", "session:retracttest");
+    const r = await http.retract("color(_, blue)", "session:retracttest") as any;
+    expect(r.ok).toBe(true);
+    expect(r.removed).toBeGreaterThanOrEqual(1);
+  });
+
+  it("resetLayer clears session facts", async () => {
+    // write a file with a known fact then reset it
+    const filePath = path.join(tmpDir, "sessions", "resetme.pl");
+    fs.writeFileSync(filePath, "resetfact(yes).\n");
+    await http.loadFile(filePath);
+    const before = await http.query("resetfact(yes)") as any;
+    expect(before.solutions.length).toBeGreaterThan(0);
+    await http.resetLayer(filePath);
+    const after = await http.query("resetfact(yes)") as any;
+    expect(after.solutions).toEqual([]);
+  });
 });
 
 // Unit tests (no swipl needed)
