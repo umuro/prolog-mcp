@@ -152,6 +152,142 @@ kill $(cat /tmp/prolog-mcp.pid)
 
 ---
 
+## Case Studies
+
+### Case Study 1: Circular Dependency Detection
+
+**Problem:** Given a module dependency graph, find all cycles and the exact edges to cut. In a codebase with 20+ modules, manual inspection misses transitive cycles.
+
+**The Prolog rules:**
+
+```prolog
+:- dynamic depends/2.
+
+path(A, B, _)   :- depends(A, B).
+path(A, B, Vis) :- depends(A, C), \+ member(C, Vis), path(C, B, [C|Vis]).
+
+can_reach(A, B) :- path(A, B, [A]).
+
+cycle(A) :-
+    depends(A, Next),
+    (Next = A ; path(Next, A, [A, Next])).
+
+cycle_edge(A, B) :-
+    depends(A, B), cycle(A), cycle(B).
+```
+
+**MCP sequence:**
+
+```json
+// Write the rule file
+{ "tool": "prolog_write_file", "arguments": { "path": "scratch/deps.pl", "content": "... above ..." } }
+
+// Assert the graph — logger→auth is the bug
+{ "tool": "prolog_assert", "arguments": { "term": "depends(auth, db)" } }
+{ "tool": "prolog_assert", "arguments": { "term": "depends(db, cache)" } }
+{ "tool": "prolog_assert", "arguments": { "term": "depends(cache, logger)" } }
+{ "tool": "prolog_assert", "arguments": { "term": "depends(logger, auth)" } }
+{ "tool": "prolog_assert", "arguments": { "term": "depends(api, router)" } }
+{ "tool": "prolog_assert", "arguments": { "term": "depends(standalone, utils)" } }
+
+// Which modules are in a cycle?
+{ "tool": "prolog_query", "arguments": { "goal": "cycle(M)" } }
+→ { "solutions": [{ "M": "auth" }, { "M": "db" }, { "M": "cache" }, { "M": "logger" }] }
+
+// Exact edges forming the cycle
+{ "tool": "prolog_query", "arguments": { "goal": "cycle_edge(A, B)" } }
+→ { "solutions": [
+    { "A": "auth", "B": "db" }, { "A": "db", "B": "cache" },
+    { "A": "cache", "B": "logger" }, { "A": "logger", "B": "auth" }
+  ] }
+
+// Standalone is safe
+{ "tool": "prolog_query", "arguments": { "goal": "cycle(standalone)" } }
+→ { "solutions": [] }
+```
+
+An LLM tracing a 20-node graph manually will hallucinate. Prolog backtracks exhaustively and returns every cycle — not a guess.
+
+---
+
+### Case Study 2: Routing Rules with Runtime Updates
+
+**Problem:** A multi-agent system routes messages by topic. Rules change at runtime as agents come online. Static config requires a restart; LLM routing guesses wrong under edge cases.
+
+**The routing rules (`core.pl`):**
+
+```prolog
+handles(billing,   telegram).
+handles(support,   telegram).
+handles(technical, discord).
+handles(X, telegram) :- \+ handles(X, _).   % default fallback
+```
+
+**MCP sequence:**
+
+```json
+// Load routing rules
+{ "tool": "prolog_write_file", "arguments": { "path": "core.pl", "content": "... above ..." } }
+
+// Route a message
+{ "tool": "prolog_query", "arguments": { "goal": "handles(billing, Channel)" } }
+→ { "solutions": [{ "Channel": "telegram" }] }
+
+// Fallback for unknown topic
+{ "tool": "prolog_query", "arguments": { "goal": "handles(marketing, Channel)" } }
+→ { "solutions": [{ "Channel": "telegram" }] }
+
+// New agent comes online — add route, no restart
+{ "tool": "prolog_assert", "arguments": { "term": "handles(alerts, pagerduty)" } }
+
+// Retract and replace a rule — persists to disk
+{ "tool": "prolog_retract", "arguments": { "term": "handles(billing, telegram)", "layer": "agent:main" } }
+{ "tool": "prolog_assert", "arguments": { "term": "handles(billing, slack)" } }
+```
+
+"What channels handle discord?" becomes `prolog_query("handles(X, discord)")`. No parsing, no regex, no LLM guess.
+
+---
+
+### Case Study 3: Cron Job Conflict Detection
+
+**Problem:** A scheduler has 10+ periodic jobs. Some fire at overlapping times, causing lock contention. Which jobs conflict?
+
+**The rules (`scratch/cron.pl`):**
+
+```prolog
+:- dynamic job/3.
+
+conflicts(A, B) :-
+    job(A, every, PA),
+    job(B, every, PB),
+    A @< B,
+    ( 0 is PA mod PB ; 0 is PB mod PA ).
+```
+
+**MCP sequence:**
+
+```json
+{ "tool": "prolog_write_file", "arguments": { "path": "scratch/cron.pl", "content": "... above ..." } }
+
+{ "tool": "prolog_assert", "arguments": { "term": "job(brain_watchdog, every, 3600)" } }
+{ "tool": "prolog_assert", "arguments": { "term": "job(linkedin_mon, every, 1800)" } }
+{ "tool": "prolog_assert", "arguments": { "term": "job(cache_warm, every, 300)" } }
+{ "tool": "prolog_assert", "arguments": { "term": "job(backup_db, every, 900)" } }
+{ "tool": "prolog_assert", "arguments": { "term": "job(log_rotate, every, 3600)" } }
+
+{ "tool": "prolog_query", "arguments": { "goal": "conflicts(X, Y)" } }
+→ { "solutions": [
+    { "X": "brain_watchdog", "Y": "linkedin_mon" },
+    { "X": "brain_watchdog", "Y": "log_rotate" },
+    { "X": "backup_db", "Y": "cache_warm" }
+  ] }
+```
+
+Desynchronize one job by adjusting its period, re-query — conflicts instantly recalculated. No arithmetic errors, no missed pairs.
+
+---
+
 ## Tool Reference
 
 ### prolog_query
@@ -322,142 +458,6 @@ All layers are visible to all queries — cross-agent fact visibility is intenti
 **Agent layer bulk-reset is intentionally unavailable via MCP.** Operator escape hatch for stale agent facts:
 1. Delete the file: `rm kbDir/agents/<id>.pl`
 2. Call `prolog_load_file("agents/<id>.pl")` with an empty file to unload predicates from SWI memory
-
----
-
-## Case Studies
-
-### Case Study 1: Circular Dependency Detection
-
-**Problem:** Given a module dependency graph, find all cycles and the exact edges to cut. In a codebase with 20+ modules, manual inspection misses transitive cycles.
-
-**The Prolog rules:**
-
-```prolog
-:- dynamic depends/2.
-
-path(A, B, _)   :- depends(A, B).
-path(A, B, Vis) :- depends(A, C), \+ member(C, Vis), path(C, B, [C|Vis]).
-
-can_reach(A, B) :- path(A, B, [A]).
-
-cycle(A) :-
-    depends(A, Next),
-    (Next = A ; path(Next, A, [A, Next])).
-
-cycle_edge(A, B) :-
-    depends(A, B), cycle(A), cycle(B).
-```
-
-**MCP sequence:**
-
-```json
-// Write the rule file
-{ "tool": "prolog_write_file", "arguments": { "path": "scratch/deps.pl", "content": "... above ..." } }
-
-// Assert the graph — logger→auth is the bug
-{ "tool": "prolog_assert", "arguments": { "term": "depends(auth, db)" } }
-{ "tool": "prolog_assert", "arguments": { "term": "depends(db, cache)" } }
-{ "tool": "prolog_assert", "arguments": { "term": "depends(cache, logger)" } }
-{ "tool": "prolog_assert", "arguments": { "term": "depends(logger, auth)" } }
-{ "tool": "prolog_assert", "arguments": { "term": "depends(api, router)" } }
-{ "tool": "prolog_assert", "arguments": { "term": "depends(standalone, utils)" } }
-
-// Which modules are in a cycle?
-{ "tool": "prolog_query", "arguments": { "goal": "cycle(M)" } }
-→ { "solutions": [{ "M": "auth" }, { "M": "db" }, { "M": "cache" }, { "M": "logger" }] }
-
-// Exact edges forming the cycle
-{ "tool": "prolog_query", "arguments": { "goal": "cycle_edge(A, B)" } }
-→ { "solutions": [
-    { "A": "auth", "B": "db" }, { "A": "db", "B": "cache" },
-    { "A": "cache", "B": "logger" }, { "A": "logger", "B": "auth" }
-  ] }
-
-// Standalone is safe
-{ "tool": "prolog_query", "arguments": { "goal": "cycle(standalone)" } }
-→ { "solutions": [] }
-```
-
-An LLM tracing a 20-node graph manually will hallucinate. Prolog backtracks exhaustively and returns every cycle — not a guess.
-
----
-
-### Case Study 2: Routing Rules with Runtime Updates
-
-**Problem:** A multi-agent system routes messages by topic. Rules change at runtime as agents come online. Static config requires a restart; LLM routing guesses wrong under edge cases.
-
-**The routing rules (`core.pl`):**
-
-```prolog
-handles(billing,   telegram).
-handles(support,   telegram).
-handles(technical, discord).
-handles(X, telegram) :- \+ handles(X, _).   % default fallback
-```
-
-**MCP sequence:**
-
-```json
-// Load routing rules
-{ "tool": "prolog_write_file", "arguments": { "path": "core.pl", "content": "... above ..." } }
-
-// Route a message
-{ "tool": "prolog_query", "arguments": { "goal": "handles(billing, Channel)" } }
-→ { "solutions": [{ "Channel": "telegram" }] }
-
-// Fallback for unknown topic
-{ "tool": "prolog_query", "arguments": { "goal": "handles(marketing, Channel)" } }
-→ { "solutions": [{ "Channel": "telegram" }] }
-
-// New agent comes online — add route, no restart
-{ "tool": "prolog_assert", "arguments": { "term": "handles(alerts, pagerduty)" } }
-
-// Retract and replace a rule — persists to disk
-{ "tool": "prolog_retract", "arguments": { "term": "handles(billing, telegram)", "layer": "agent:main" } }
-{ "tool": "prolog_assert", "arguments": { "term": "handles(billing, slack)" } }
-```
-
-"What channels handle discord?" becomes `prolog_query("handles(X, discord)")`. No parsing, no regex, no LLM guess.
-
----
-
-### Case Study 3: Cron Job Conflict Detection
-
-**Problem:** A scheduler has 10+ periodic jobs. Some fire at overlapping times, causing lock contention. Which jobs conflict?
-
-**The rules (`scratch/cron.pl`):**
-
-```prolog
-:- dynamic job/3.
-
-conflicts(A, B) :-
-    job(A, every, PA),
-    job(B, every, PB),
-    A @< B,
-    ( 0 is PA mod PB ; 0 is PB mod PA ).
-```
-
-**MCP sequence:**
-
-```json
-{ "tool": "prolog_write_file", "arguments": { "path": "scratch/cron.pl", "content": "... above ..." } }
-
-{ "tool": "prolog_assert", "arguments": { "term": "job(brain_watchdog, every, 3600)" } }
-{ "tool": "prolog_assert", "arguments": { "term": "job(linkedin_mon, every, 1800)" } }
-{ "tool": "prolog_assert", "arguments": { "term": "job(cache_warm, every, 300)" } }
-{ "tool": "prolog_assert", "arguments": { "term": "job(backup_db, every, 900)" } }
-{ "tool": "prolog_assert", "arguments": { "term": "job(log_rotate, every, 3600)" } }
-
-{ "tool": "prolog_query", "arguments": { "goal": "conflicts(X, Y)" } }
-→ { "solutions": [
-    { "X": "brain_watchdog", "Y": "linkedin_mon" },
-    { "X": "brain_watchdog", "Y": "log_rotate" },
-    { "X": "backup_db", "Y": "cache_warm" }
-  ] }
-```
-
-Desynchronize one job by adjusting its period, re-query — conflicts instantly recalculated. No arithmetic errors, no missed pairs.
 
 ---
 
