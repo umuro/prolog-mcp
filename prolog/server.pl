@@ -52,14 +52,20 @@ handle_query(Req) :-
     % term_to_atom discards them, making dict keys unreadable internal names.
     atom_to_term(GoalAtom, Goal, Bindings),
     ( get_dict(timeout_ms, Body, TMs) -> TimeoutSec is TMs / 1000 ; TimeoutSec = 5 ),
-    ( catch(
-        call_with_time_limit(TimeoutSec,
-          aggregate_all(bag(Dict), solve_named(Goal, Bindings, Dict), Dicts)),
-        time_limit_exceeded,
-        ( reply_json_dict(_{error: timeout, partial: []}) )
-      )
-    -> reply_json_dict(_{solutions: Dicts, exhausted: true})
-    ;  reply_json_dict(_{solutions: [], exhausted: true}) ).
+    % reply_json_dict is called exactly once — inside catch — so the timeout
+    % recovery branch cannot fall through into the success branch with unbound Dicts.
+    catch(
+        ( call_with_time_limit(TimeoutSec,
+              aggregate_all(bag(Dict), solve_named(Goal, Bindings, Dict), Dicts)),
+          reply_json_dict(_{solutions: Dicts, exhausted: true})
+        ),
+        Error,
+        ( Error = time_limit_exceeded
+        -> reply_json_dict(_{error: timeout, partial: []})
+        ;  term_string(Error, EStr),
+           reply_json_dict(_{error: query_error, detail: EStr})
+        )
+    ).
 
 solve_named(Goal, Bindings, Dict) :-
     % copy_term duplicates Goal+Bindings together so the shared variable links
