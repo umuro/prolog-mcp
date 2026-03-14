@@ -33,12 +33,26 @@ describe("resolvePath", () => {
     );
   });
 
+  it("resolves scratch layer (bare)", () => {
+    expect(mgr.resolvePath("scratch")).toBe(path.join(tmpDir, "scratch", "scratch.pl"));
+  });
+
+  it("resolves scratch layer (named)", () => {
+    expect(mgr.resolvePath("scratch:conflicts")).toBe(
+      path.join(tmpDir, "scratch", "conflicts.pl")
+    );
+  });
+
   it("rejects core for write", () => {
     expect(() => mgr.resolvePath("core", { write: true })).toThrow("layer_readonly");
   });
 
   it("resolves core for read", () => {
     expect(mgr.resolvePath("core")).toBe(path.join(tmpDir, "core.pl"));
+  });
+
+  it("throws for unknown layer", () => {
+    expect(() => mgr.resolvePath("badlayer")).toThrow("unknown_layer");
   });
 });
 
@@ -58,6 +72,19 @@ describe("writeToLayer", () => {
     const content = fs.readFileSync(path.join(tmpDir, "agents", "main.pl"), "utf8");
     // Content must be exactly one of the 5 writes — no corruption/interleaving
     expect(content).toMatch(/^fact\(\d\)\.\n$/);
+  });
+
+  it("rejects writes to core layer", async () => {
+    await expect(mgr.writeToLayer("core", "x.\n")).rejects.toThrow("layer_readonly");
+  });
+});
+
+describe("appendToLayer", () => {
+  it("appends lines to file", async () => {
+    await mgr.appendToLayer("agent:main", "fact(1).");
+    await mgr.appendToLayer("agent:main", "fact(2).");
+    const content = fs.readFileSync(path.join(tmpDir, "agents", "main.pl"), "utf8");
+    expect(content).toBe("fact(1).\nfact(2).\n");
   });
 });
 
