@@ -28,21 +28,19 @@ This MCP server gives coding agents a small, local, persistent Prolog runtime. T
 
 ## How it works
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     HOST MACHINE                            │
-│                                                             │
-│  Claude Code ──MCP(stdio)──┐                               │
-│                            └─► prolog-mcp ──HTTP──► swipl  │
-│  OpenClaw agents ──MCP(stdio)─┘   (single Node.js process) │
-│  (via Docker gateway)            + layer files on disk      │
-│                                                             │
-│  Layer files (source of truth):                             │
-│  • kbDir/core.pl           (permanent, operator-only)       │
-│  • kbDir/agents/*.pl       (per-agent, persistent)          │
-│  • kbDir/sessions/*.pl     (ephemeral, per-session)         │
-│  • kbDir/scratch/*.pl      (ephemeral, manual cleanup)      │
-└─────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart LR
+    CC["Claude Code"]
+    OC["OpenClaw agents\n(via Docker gateway)"]
+    MCP["prolog-mcp\nNode.js process"]
+    SWI["SWI-Prolog\nlocalhost:7474"]
+    KB[("kbDir/\ncore.pl\nagents/*.pl\nsessions/*.pl\nscratch/*.pl")]
+
+    CC  -- "MCP · stdio" --> MCP
+    OC  -- "MCP · stdio" --> MCP
+    MCP -- "HTTP"        --> SWI
+    MCP -- "read/write"  --> KB
+    SWI -- "consult"     --> KB
 ```
 
 A single Node.js process (`prolog-mcp`) listens on stdio for MCP calls. SWI-Prolog runs as a persistent HTTP daemon on `localhost:7474`. Both Claude Code and OpenClaw agents connect via separate stdio MCP transports and share the same Prolog backend.
