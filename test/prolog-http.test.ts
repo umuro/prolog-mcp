@@ -169,6 +169,21 @@ describe.skipIf(SKIP)("PrologHttp integration", () => {
     expect(r.truncated).toBe(false);
   });
 
+  it("resetLayer clears assertz-only facts that never touched disk", async () => {
+    // This is the edge case: /assert with a layer → in-memory only (no file write).
+    // /reset must still remove these via the mcp_layer_track mechanism.
+    await http.assert("orphan_fact(ghost)", "session:orphan_test");
+
+    const before = await http.query("orphan_fact(ghost)") as any;
+    expect(before.solutions.length).toBe(1);
+
+    const orphanFile = path.join(tmpDir, "sessions", "orphan_test.pl");
+    await http.resetLayer(orphanFile, "session:orphan_test");
+
+    const after = await http.query("orphan_fact(ghost)") as any;
+    expect(after.solutions).toEqual([]);
+  });
+
   it("resetLayer clears session facts", async () => {
     // write a file with a known fact then reset it
     const filePath = path.join(tmpDir, "sessions", "resetme.pl");

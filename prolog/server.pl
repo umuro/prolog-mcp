@@ -16,6 +16,9 @@
 :- initialization(main, main).
 
 :- dynamic kb_dir/1.
+% Tracks which functor/arity pairs were assertz'd into each layer via /assert.
+% Used by handle_reset to clean up facts that never touched a layer file.
+:- dynamic mcp_layer_track/2.  % mcp_layer_track(Layer, F/A)
 
 main :-
     ( getenv('SWIPL_PORT', PortStr) -> atom_number(PortStr, Port) ; Port = 7474 ),
@@ -100,6 +103,14 @@ handle_assert(Req) :-
     atom_string(TermAtom, Body.term),
     term_to_atom(Term, TermAtom),
     ensure_dynamic(Term),
+    % When a layer is provided, record the functor/arity so handle_reset can
+    % find and remove these in-memory-only facts even if they never touched disk.
+    ( get_dict(layer, Body, LayerStr) ->
+        atom_string(Layer, LayerStr),
+        term_head(Term, Head),
+        functor(Head, F, A),
+        ( mcp_layer_track(Layer, F/A) -> true ; assertz(mcp_layer_track(Layer, F/A)) )
+    ; true ),
     assertz(Term),
     reply_json_dict(_{ok: true}).
 
@@ -175,12 +186,21 @@ handle_reset(Req) :-
     ( exists_file(File) ->
         file_terms(File, Terms),
         length(Terms, Count),
-        % retractall each head pattern so assertz'd + file-loaded clauses are cleared
         % abolish works on both static (consult-loaded) and dynamic predicates.
         % retractall/1 throws permission_error on static predicates from consult.
-        maplist([T]>>(functor(T, F, A), catch(abolish(F/A), _, true)), Terms),
+        maplist([T]>>(term_head(T, H), functor(H, F, A), catch(abolish(F/A), _, true)), Terms),
         catch(unload_file(File), _, true)
     ; Count = 0 ),
+    % Clean up any predicates that were assertz'd into this layer via /assert
+    % but never written to disk (so not caught by the file-based abolish above).
+    ( get_dict(layer, Body, LayerStr) ->
+        atom_string(Layer, LayerStr),
+        forall(
+            mcp_layer_track(Layer, F/A),
+            catch(abolish(F/A), _, true)
+        ),
+        retractall(mcp_layer_track(Layer, _))
+    ; true ),
     reply_json_dict(_{ok: true, removed: Count}).
 
 % file_terms(+File, -Terms): read all top-level terms from a .pl file

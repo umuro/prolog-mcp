@@ -169,7 +169,7 @@ async function main() {
       }
       await guard();
       const filePath = layers.resolvePath(layer);
-      const result = await http.resetLayer(filePath);
+      const result = await http.resetLayer(filePath, layer);
       if (prefix === "session") await layers.deleteSessionLayer(layer);
       return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
     }

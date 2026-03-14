@@ -50,8 +50,8 @@ export class PrologHttp {
     return this.post("/load", { path: filePath });
   }
 
-  async resetLayer(filePath: string): Promise<ResetLayerResult> {
-    return this.post("/reset", { path: filePath });
+  async resetLayer(filePath: string, layer?: string): Promise<ResetLayerResult> {
+    return this.post("/reset", { path: filePath, ...(layer ? { layer } : {}) });
   }
 
   async listFacts(opts: {
