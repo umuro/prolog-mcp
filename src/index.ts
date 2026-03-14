@@ -136,6 +136,7 @@ async function main() {
     "prolog_list_facts",
     "List facts in the KB, optionally filtered by functor",
     {
+      layer: z.string().optional().describe("Filter by layer, e.g. 'agent:main' or 'session:abc'"),
       functor: z.string().optional().describe("Filter by functor name"),
       limit: z.number().optional().describe("Max results (default 100)"),
       offset: z.number().optional().describe("Skip first N results"),

@@ -14,10 +14,13 @@
 
 :- initialization(main, main).
 
+:- dynamic kb_dir/1.
+
 main :-
     ( getenv('SWIPL_PORT', PortStr) -> atom_number(PortStr, Port) ; Port = 7474 ),
     ( getenv('KB_DIR', KbDir) -> true
     ; expand_file_name('~/.local/share/prolog-mcp', [KbDir]) ),
+    assertz(kb_dir(KbDir)),
     load_all_layers(KbDir),
     http_server(http_dispatch, [port(Port), workers(4)]),
     format("prolog-mcp: listening on :~w~n", [Port]),
@@ -87,7 +90,7 @@ handle_load(Req) :-
     http_read_json_dict(Req, Body, []),
     atom_string(File, Body.path),
     ( catch(
-        ( exists_file(File) -> unload_file(File) ; true,
+        ( ( exists_file(File) -> unload_file(File) ; true ),
           consult(File) ),
         Err,
         ( term_string(Err, EStr),
@@ -102,12 +105,38 @@ handle_reset(Req) :-
     ( exists_file(File) -> unload_file(File) ; true ),
     reply_json_dict(_{ok: true, removed: 0}).
 
+% layer_to_file(+LayerName, -AbsPath) maps "agent:foo" -> KbDir/agents/foo.pl etc.
+layer_to_file(Layer, File) :-
+    kb_dir(KbDir),
+    ( sub_atom(Layer, _, _, _, ':') ->
+        sub_atom(Layer, B, _, _, ':'),
+        sub_atom(Layer, 0, B, _, Prefix),
+        atom_length(Layer, Len), After is Len - B - 1,
+        sub_atom(Layer, _, After, 0, Id),
+        atomic_list_concat([KbDir, '/', Prefix, 's/', Id, '.pl'], File)
+    ; % bare names: core, scratch
+      atomic_list_concat([KbDir, '/', Layer, '.pl'], File)
+    ).
+
 handle_list(Req) :-
     http_read_json_dict(Req, Body, []),
     ( get_dict(limit, Body, Limit) -> true ; Limit = 100 ),
-    aggregate_all(bag(S),
-      ( clause(H, _), term_string(H, S) ),
-      All),
+    ( get_dict(layer, Body, LayerStr) ->
+        atom_string(LayerAtom, LayerStr),
+        layer_to_file(LayerAtom, LayerFile),
+        aggregate_all(bag(S),
+          ( clause(H, _),
+            predicate_property(H, defined),
+            catch(
+              ( nth_clause(H, _, Ref),
+                clause_property(Ref, file(LayerFile)) ),
+              _, fail),
+            term_string(H, S) ),
+          All)
+    ;   aggregate_all(bag(S),
+          ( clause(H, _), term_string(H, S) ),
+          All)
+    ),
     length(All, Total),
     ( Total > Limit ->
         length(Trunc, Limit), append(Trunc, _, All),

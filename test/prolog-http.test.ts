@@ -1,5 +1,5 @@
 // test/prolog-http.test.ts
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi, afterEach } from "vitest";
 import { PrologHttp } from "../src/prolog-http.js";
 import { execSync } from "node:child_process";
 import { spawn } from "node:child_process";
@@ -63,10 +63,31 @@ describe.skipIf(SKIP)("PrologHttp integration", () => {
     expect(r.solutions).toEqual([]);
     expect(r.exhausted).toBe(true);
   });
+
+  it("hot-reloads an already-loaded file", async () => {
+    const plFile = path.join(tmpDir, "core.pl");
+    // file already loaded at startup; overwrite with new fact and reload
+    fs.writeFileSync(plFile, "parent(tom,bob).\nparent(tom,liz).\n");
+    const loadResult = await http.loadFile(plFile) as any;
+    expect(loadResult.ok).toBe(true);
+    const r = await http.query("parent(tom, X)") as any;
+    const names = r.solutions.map((s: any) => s.X);
+    expect(names).toContain("liz");
+  });
+
+  it("listFacts returns only facts from requested layer", async () => {
+    await http.assert("layertest(from_session)", "session:layercheck");
+    const r = await http.listFacts({ layer: "session:layercheck" }) as any;
+    expect(r.facts.some((f: string) => f.includes("layertest"))).toBe(true);
+    // core facts (parent/2) should NOT appear
+    expect(r.facts.some((f: string) => f.includes("parent"))).toBe(false);
+  });
 });
 
 // Unit tests (no swipl needed)
 describe("PrologHttp unit", () => {
+  afterEach(() => vi.restoreAllMocks());
+
   it("health returns false when server unreachable", async () => {
     const http = new PrologHttp(19999);
     expect(await http.health()).toBe(false);
@@ -75,5 +96,30 @@ describe("PrologHttp unit", () => {
   it("constructs correct base URL", () => {
     const http = new PrologHttp(7474) as any;
     expect(http.baseUrl).toBe("http://localhost:7474");
+  });
+
+  it("listFacts passes layer to POST body", async () => {
+    const http = new PrologHttp(19998);
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ facts: [], truncated: false }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await http.listFacts({ layer: "agent:main", functor: "foo", limit: 10 });
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.layer).toBe("agent:main");
+    expect(body.functor).toBe("foo");
+  });
+
+  it("listFacts omits layer key when not provided", async () => {
+    const http = new PrologHttp(19998);
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ facts: [], truncated: false }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await http.listFacts({ functor: "foo" });
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.layer).toBeUndefined();
   });
 });

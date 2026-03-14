@@ -51,6 +51,7 @@ export class PrologHttp {
   }
 
   async listFacts(opts: {
+    layer?: string;
     functor?: string;
     limit?: number;
     offset?: number;
