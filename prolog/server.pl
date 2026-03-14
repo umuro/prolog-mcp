@@ -1,0 +1,115 @@
+:- module(prolog_mcp_server, []).
+
+:- use_module(library(http/thread_httpd)).
+:- use_module(library(http/http_dispatch)).
+:- use_module(library(http/http_json)).
+
+:- http_handler('/health', handle_health,  [method(get)]).
+:- http_handler('/query',  handle_query,   [method(post)]).
+:- http_handler('/assert', handle_assert,  [method(post)]).
+:- http_handler('/retract',handle_retract, [method(post)]).
+:- http_handler('/load',   handle_load,    [method(post)]).
+:- http_handler('/reset',  handle_reset,   [method(post)]).
+:- http_handler('/list',   handle_list,    [method(post)]).
+
+:- initialization(main, main).
+
+main :-
+    ( getenv('SWIPL_PORT', PortStr) -> atom_number(PortStr, Port) ; Port = 7474 ),
+    ( getenv('KB_DIR', KbDir) -> true
+    ; expand_file_name('~/.local/share/prolog-mcp', [KbDir]) ),
+    load_all_layers(KbDir),
+    http_server(http_dispatch, [port(Port), workers(4)]),
+    format("prolog-mcp: listening on :~w~n", [Port]),
+    thread_get_message(_).
+
+load_all_layers(KbDir) :-
+    atomic_list_concat([KbDir, '/core.pl'], Core),
+    ( exists_file(Core) -> consult(Core) ; true ),
+    load_dir(KbDir, agents),
+    load_dir(KbDir, sessions).
+
+load_dir(KbDir, Sub) :-
+    atomic_list_concat([KbDir, '/', Sub], Dir),
+    ( exists_directory(Dir) ->
+        directory_files(Dir, Files),
+        forall(
+          ( member(F, Files), atom_concat(_, '.pl', F),
+            atomic_list_concat([Dir, '/', F], Full) ),
+          ( catch(consult(Full), _, true) )
+        )
+    ; true ).
+
+handle_health(_) :- reply_json_dict(_{status: ok}).
+
+handle_query(Req) :-
+    http_read_json_dict(Req, Body, []),
+    atom_string(GoalAtom, Body.goal),
+    term_to_atom(Goal, GoalAtom),
+    ( get_dict(timeout_ms, Body, TMs) -> TimeoutSec is TMs / 1000 ; TimeoutSec = 5 ),
+    ( catch(
+        call_with_time_limit(TimeoutSec,
+          aggregate_all(bag(Sol), solve(Goal, Sol), Sols)),
+        time_limit_exceeded,
+        ( reply_json_dict(_{error: timeout, partial: []}) )
+      )
+    -> maplist(pairs_to_dict, Sols, Dicts),
+       reply_json_dict(_{solutions: Dicts, exhausted: true})
+    ;  reply_json_dict(_{solutions: [], exhausted: true}) ).
+
+solve(Goal, Pairs) :-
+    copy_term(Goal, GoalCopy),
+    call(GoalCopy),
+    term_variables(Goal, Vars),
+    term_variables(GoalCopy, Vals),
+    maplist([V,Val,K-VS]>>(term_to_atom(V,K), term_string(Val,VS)), Vars, Vals, Pairs).
+
+pairs_to_dict(Pairs, Dict) :-
+    pairs_keys_values(Pairs, Ks, Vs),
+    maplist([K,V,K-V]>>true, Ks, Vs, KVs),
+    dict_pairs(Dict, _, KVs).
+
+handle_assert(Req) :-
+    http_read_json_dict(Req, Body, []),
+    atom_string(TermAtom, Body.term),
+    term_to_atom(Term, TermAtom),
+    assertz(Term),
+    reply_json_dict(_{ok: true}).
+
+handle_retract(Req) :-
+    http_read_json_dict(Req, Body, []),
+    atom_string(TermAtom, Body.term),
+    term_to_atom(Term, TermAtom),
+    aggregate_all(count, retract(Term), Count),
+    reply_json_dict(_{ok: true, removed: Count}).
+
+handle_load(Req) :-
+    http_read_json_dict(Req, Body, []),
+    atom_string(File, Body.path),
+    ( catch(
+        ( exists_file(File) -> unload_file(File) ; true,
+          consult(File) ),
+        Err,
+        ( term_string(Err, EStr),
+          reply_json_dict(_{error: syntax_error, detail: EStr}) )
+      )
+    -> reply_json_dict(_{ok: true})
+    ;  true ).
+
+handle_reset(Req) :-
+    http_read_json_dict(Req, Body, []),
+    atom_string(File, Body.path),
+    ( exists_file(File) -> unload_file(File) ; true ),
+    reply_json_dict(_{ok: true, removed: 0}).
+
+handle_list(Req) :-
+    http_read_json_dict(Req, Body, []),
+    ( get_dict(limit, Body, Limit) -> true ; Limit = 100 ),
+    aggregate_all(bag(S),
+      ( clause(H, _), term_string(H, S) ),
+      All),
+    length(All, Total),
+    ( Total > Limit ->
+        length(Trunc, Limit), append(Trunc, _, All),
+        reply_json_dict(_{facts: Trunc, truncated: true})
+    ;   reply_json_dict(_{facts: All, truncated: false}) ).
