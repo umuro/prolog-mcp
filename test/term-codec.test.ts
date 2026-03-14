@@ -73,4 +73,31 @@ describe("termToString — additional edge cases", () => {
   it("passes term containing special Prolog chars (non-null)", () => {
     expect(termToString("f(X) :- g(X)")).toBe("f(X) :- g(X)");
   });
+
+  // Trailing-dot stripping — agents often write "fact(a)." in Prolog style;
+  // the caller appends its own "." so we must strip the agent-supplied one first.
+  it("strips a trailing period", () => {
+    expect(termToString("parent(tom, bob).")).toBe("parent(tom, bob)");
+  });
+
+  it("strips trailing period with trailing whitespace", () => {
+    expect(termToString("parent(tom, bob).  ")).toBe("parent(tom, bob)");
+  });
+
+  it("strips trailing period with trailing newline", () => {
+    expect(termToString("parent(tom, bob).\n")).toBe("parent(tom, bob)");
+  });
+
+  it("does not strip a period that is part of the term", () => {
+    // A period inside the term (e.g. float literal) must be preserved
+    expect(termToString("score(3.14)")).toBe("score(3.14)");
+  });
+
+  it("does not strip when there is no trailing period", () => {
+    expect(termToString("fact(x)")).toBe("fact(x)");
+  });
+
+  it("strips trailing period from a rule with body", () => {
+    expect(termToString("route(X,C) :- handles(X,C).")).toBe("route(X,C) :- handles(X,C)");
+  });
 });

@@ -22,6 +22,7 @@ beforeAll(async () => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "prolog-int-"));
   fs.mkdirSync(path.join(tmpDir, "agents"));
   fs.mkdirSync(path.join(tmpDir, "sessions"));
+  fs.mkdirSync(path.join(tmpDir, "scratch"));
   fs.writeFileSync(path.join(tmpDir, "core.pl"), "parent(tom,bob).\n");
   swiplProc = spawn("swipl", ["-q", path.resolve("prolog/server.pl")], {
     env: { ...process.env, SWIPL_PORT: String(PORT), KB_DIR: tmpDir },
@@ -103,6 +104,69 @@ describe.skipIf(SKIP)("PrologHttp integration", () => {
     const r = await http.retract("color(_, blue)", "session:retracttest") as any;
     expect(r.ok).toBe(true);
     expect(r.removed).toBeGreaterThanOrEqual(1);
+  });
+
+  it("retractFromFile removes matching term from disk and memory", async () => {
+    const layerFile = path.join(tmpDir, "agents", "retractfile.pl");
+    fs.writeFileSync(layerFile, "keep_me(yes).\nremove_me(yes).\n");
+    await http.loadFile(layerFile);
+
+    const before = await http.query("remove_me(yes)") as any;
+    expect(before.solutions.length).toBe(1);
+
+    const r = await http.retractFromFile("remove_me(yes)", layerFile) as any;
+    expect(r.ok).toBe(true);
+    expect(r.removed).toBe(1);
+
+    // removed from memory
+    const afterMem = await http.query("remove_me(yes)") as any;
+    expect(afterMem.solutions).toEqual([]);
+
+    // removed from disk
+    const contents = fs.readFileSync(layerFile, "utf8");
+    expect(contents).not.toContain("remove_me");
+    expect(contents).toContain("keep_me");
+  });
+
+  it("retractFromFile leaves file unchanged when term not found", async () => {
+    const layerFile = path.join(tmpDir, "agents", "noop.pl");
+    fs.writeFileSync(layerFile, "stay(here).\n");
+    await http.loadFile(layerFile);
+
+    const r = await http.retractFromFile("absent(fact)", layerFile) as any;
+    expect(r.ok).toBe(true);
+    expect(r.removed).toBe(0);
+    expect(fs.readFileSync(layerFile, "utf8")).toContain("stay");
+  });
+
+  it("handle_load returns a single valid JSON on syntax error (no double-reply)", async () => {
+    const badFile = path.join(tmpDir, "scratch", "bad_syntax.pl");
+    fs.writeFileSync(badFile, "broken :- .\n");
+    const r = await http.loadFile(badFile) as any;
+    // Must have an error key, not ok — confirming exactly one JSON reply
+    expect(r.error).toBeDefined();
+    expect(r.ok).toBeUndefined();
+  });
+
+  it("listFacts with layer+functor filters to matching functor only", async () => {
+    const layerFile = path.join(tmpDir, "sessions", "mixed.pl");
+    fs.writeFileSync(layerFile, "alpha(1).\nalpha(2).\nbeta(x).\n");
+    await http.loadFile(layerFile);
+
+    const r = await http.listFacts({ layer: "session:mixed", functor: "alpha" }) as any;
+    expect(r.facts.every((f: string) => f.startsWith("alpha"))).toBe(true);
+    expect(r.facts.some((f: string) => f.startsWith("beta"))).toBe(false);
+    expect(r.facts.length).toBe(2);
+  });
+
+  it("listFacts offset beyond total length returns empty list", async () => {
+    const layerFile = path.join(tmpDir, "sessions", "small.pl");
+    fs.writeFileSync(layerFile, "tiny(1).\ntiny(2).\n");
+    await http.loadFile(layerFile);
+
+    const r = await http.listFacts({ layer: "session:small", offset: 999 }) as any;
+    expect(r.facts).toEqual([]);
+    expect(r.truncated).toBe(false);
   });
 
   it("resetLayer clears session facts", async () => {

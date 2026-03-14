@@ -100,10 +100,10 @@ async function main() {
   // ── prolog_write_file ─────────────────────────────────────────
   server.tool(
     "prolog_write_file",
-    "Write a .pl file to disk and hot-reload it (use for core.pl authoring)",
+    "Write a .pl file to disk and hot-reload it. WARNING: replaces the entire file — not an append. Use for authoring multi-clause rule files (core.pl, scratch/). For individual facts use prolog_assert instead. On syntax error the file is rolled back and the server keeps running.",
     {
       path: z.string().describe("Relative path inside kbDir, e.g. 'core.pl' or 'scratch/foo.pl'"),
-      content: z.string().describe("Full Prolog source content"),
+      content: z.string().describe("Complete Prolog source — the full file content, not just the new clause"),
     },
     async ({ path: userPath, content }) => {
       const filePath = guardPath(cfg.kbDir, userPath);

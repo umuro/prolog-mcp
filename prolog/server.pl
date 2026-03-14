@@ -139,14 +139,28 @@ handle_retract_file(Req) :-
     ; true ),
     reply_json_dict(_{ok: true, removed: Removed}).
 
-% Fix: reply_json_dict(ok) lives inside the try block so it is never reached
-% after an error — preventing the double-reply that previously caused the
-% catch recovery arm to fire followed by the -> true branch.
+% check_syntax(+File): validate all terms in File using read_term/3, which
+% throws syntax_error on malformed input. consult/1 swallows syntax errors to
+% stderr and returns true, making it unsuitable for validation.
+check_syntax(File) :-
+    setup_call_cleanup(
+        open(File, read, Stream),
+        validate_terms(Stream),
+        close(Stream)).
+
+validate_terms(Stream) :-
+    read_term(Stream, T, []),
+    ( T == end_of_file -> true ; validate_terms(Stream) ).
+
+% handle_load: check_syntax runs first (throws on error), then consult.
+% reply_json_dict(ok) is inside the try block — the catch handler is the only
+% path that calls it on error, preventing the previous double-reply bug.
 handle_load(Req) :-
     http_read_json_dict(Req, Body, []),
     atom_string(File, Body.path),
     catch(
         ( ( exists_file(File) -> unload_file(File) ; true ),
+          check_syntax(File),
           consult(File),
           reply_json_dict(_{ok: true})
         ),
