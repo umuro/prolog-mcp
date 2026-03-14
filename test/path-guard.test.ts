@@ -32,4 +32,20 @@ describe("guardPath", () => {
   it("rejects deeply nested escape", () => {
     expect(() => guardPath(kbDir, "scratch/../../../etc/passwd")).toThrow("path_not_allowed");
   });
+
+  it("allows path that resolves to kbDir itself (dot)", () => {
+    // path.resolve(kbDir, ".") === kbDir — the guard allows resolved === kbDir
+    expect(() => guardPath(kbDir, ".")).not.toThrow();
+    expect(guardPath(kbDir, ".")).toBe(kbDir);
+  });
+
+  it("rejects a path with only dots that escape the root", () => {
+    // Two levels up from kbDir should always escape
+    expect(() => guardPath(kbDir, "../../")).toThrow("path_not_allowed");
+  });
+
+  it("allows a path with spaces in the filename", () => {
+    const result = guardPath(kbDir, "scratch/my file.pl");
+    expect(result).toBe(`${kbDir}/scratch/my file.pl`);
+  });
 });
