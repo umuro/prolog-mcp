@@ -4,13 +4,14 @@
 :- use_module(library(http/http_dispatch)).
 :- use_module(library(http/http_json)).
 
-:- http_handler('/health', handle_health,  [method(get)]).
-:- http_handler('/query',  handle_query,   [method(post)]).
-:- http_handler('/assert', handle_assert,  [method(post)]).
-:- http_handler('/retract',handle_retract, [method(post)]).
-:- http_handler('/load',   handle_load,    [method(post)]).
-:- http_handler('/reset',  handle_reset,   [method(post)]).
-:- http_handler('/list',   handle_list,    [method(post)]).
+:- http_handler('/health',       handle_health,        [method(get)]).
+:- http_handler('/query',        handle_query,         [method(post)]).
+:- http_handler('/assert',       handle_assert,        [method(post)]).
+:- http_handler('/retract',      handle_retract,       [method(post)]).
+:- http_handler('/retract_file', handle_retract_file,  [method(post)]).
+:- http_handler('/load',         handle_load,          [method(post)]).
+:- http_handler('/reset',        handle_reset,         [method(post)]).
+:- http_handler('/list',         handle_list,          [method(post)]).
 
 :- initialization(main, main).
 
@@ -83,13 +84,26 @@ pairs_to_dict(Pairs, Dict) :-
     maplist([K,V,K-V]>>true, Ks, Vs, KVs),
     dict_pairs(Dict, _, KVs).
 
+% Extract the head from a fact or rule term.
+term_head(Head :- _, Head) :- !.
+term_head(Head, Head).
+
+% Ensure predicate is declared dynamic before asserting.
+% Needed when a .pl file was consult-loaded without :- dynamic declarations.
+ensure_dynamic(Term) :-
+    term_head(Term, Head),
+    functor(Head, F, A),
+    ( predicate_property(Head, dynamic) -> true ; dynamic(F/A) ).
+
 handle_assert(Req) :-
     http_read_json_dict(Req, Body, []),
     atom_string(TermAtom, Body.term),
     term_to_atom(Term, TermAtom),
+    ensure_dynamic(Term),
     assertz(Term),
     reply_json_dict(_{ok: true}).
 
+% In-memory retract only — used internally. Agents use /retract_file via MCP.
 handle_retract(Req) :-
     http_read_json_dict(Req, Body, []),
     atom_string(TermAtom, Body.term),
@@ -97,18 +111,49 @@ handle_retract(Req) :-
     aggregate_all(count, retract(Term), Count),
     reply_json_dict(_{ok: true, removed: Count}).
 
+% File-backed retract: removes matching terms from the layer file on disk,
+% then reloads so in-memory state matches. Survives daemon restarts.
+handle_retract_file(Req) :-
+    http_read_json_dict(Req, Body, []),
+    atom_string(TermAtom, Body.term),
+    term_to_atom(Pattern, TermAtom),
+    atom_string(File, Body.path),
+    file_terms(File, AllTerms),
+    % exclude/3: keep terms that do NOT unify with Pattern (copy_term to avoid
+    % binding Pattern across iterations).
+    exclude([T]>>(copy_term(Pattern, P), T = P), AllTerms, Remaining),
+    length(AllTerms, Before),
+    length(Remaining, After),
+    Removed is Before - After,
+    ( Removed > 0 ->
+        maplist([T, Line]>>(term_string(T, TS), string_concat(TS, ".", Line)),
+                Remaining, Lines),
+        atomic_list_concat(Lines, '\n', Content),
+        setup_call_cleanup(
+            open(File, write, Stream),
+            ( write(Stream, Content), nl(Stream) ),
+            close(Stream)
+        ),
+        catch(unload_file(File), _, true),
+        ( Remaining \= [] -> catch(consult(File), _, true) ; true )
+    ; true ),
+    reply_json_dict(_{ok: true, removed: Removed}).
+
+% Fix: reply_json_dict(ok) lives inside the try block so it is never reached
+% after an error — preventing the double-reply that previously caused the
+% catch recovery arm to fire followed by the -> true branch.
 handle_load(Req) :-
     http_read_json_dict(Req, Body, []),
     atom_string(File, Body.path),
-    ( catch(
+    catch(
         ( ( exists_file(File) -> unload_file(File) ; true ),
-          consult(File) ),
+          consult(File),
+          reply_json_dict(_{ok: true})
+        ),
         Err,
         ( term_string(Err, EStr),
           reply_json_dict(_{error: syntax_error, detail: EStr}) )
-      )
-    -> reply_json_dict(_{ok: true})
-    ;  true ).
+    ).
 
 handle_reset(Req) :-
     http_read_json_dict(Req, Body, []),
@@ -161,14 +206,32 @@ handle_list(Req) :-
         atom_string(LayerAtom, LayerStr),
         layer_to_file(LayerAtom, LayerFile),
         file_terms(LayerFile, LayerTerms),
-        maplist(term_string, LayerTerms, All)
-    ;   aggregate_all(bag(S),
-          ( clause(H, _), term_string(H, S) ),
+        % Apply functor filter in the layer branch too (was silently ignored before).
+        ( get_dict(functor, Body, FStr) ->
+            atom_string(FAtom, FStr),
+            include([T]>>(term_head(T, H), functor(H, FAtom, _)), LayerTerms, Filtered)
+        ;   Filtered = LayerTerms
+        ),
+        maplist(term_string, Filtered, All)
+    ;   % Global listing: use current_predicate to enumerate safely in SWI 9.x.
+        % clause/2 with an unbound head throws instantiation_error on static
+        % predicates; current_predicate + dynamic guard avoids that.
+        ( get_dict(functor, Body, GFStr) -> atom_string(GFAtom, GFStr) ; GFAtom = _ ),
+        aggregate_all(bag(S),
+          ( current_predicate(GFAtom/A),
+            functor(H, GFAtom, A),
+            predicate_property(H, dynamic),
+            clause(H, _),
+            term_string(H, S) ),
           All)
     ),
     ( get_dict(offset, Body, Offset) -> true ; Offset = 0 ),
-    ( Offset > 0, length(All, AllLen), AllLen >= Offset ->
-        length(Skip, Offset), append(Skip, Paged, All)
+    % Fix: when Offset >= length(All), return [] instead of the full list.
+    ( Offset > 0 ->
+        length(All, AllLen),
+        ( AllLen > Offset ->
+            length(Skip, Offset), append(Skip, Paged, All)
+        ;   Paged = [] )
     ;   Paged = All ),
     length(Paged, Total),
     ( Total > Limit ->

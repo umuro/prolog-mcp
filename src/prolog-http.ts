@@ -42,6 +42,10 @@ export class PrologHttp {
     return this.post("/retract", { term, layer });
   }
 
+  async retractFromFile(term: string, filePath: string): Promise<RetractResult> {
+    return this.post("/retract_file", { term, path: filePath });
+  }
+
   async loadFile(filePath: string): Promise<LoadFileResult> {
     return this.post("/load", { path: filePath });
   }

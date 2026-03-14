@@ -54,12 +54,15 @@ async function main() {
   // ── prolog_assert ─────────────────────────────────────────────
   server.tool(
     "prolog_assert",
-    "Assert a fact into an agent or session layer (core is read-only)",
+    "Assert a fact or rule into the KB. Persists to disk and survives daemon restarts. Use agent:main (default) for permanent knowledge; use session:<id> for ephemeral facts tied to the current session.",
     {
-      term: z.string().describe("Prolog term, e.g. 'parent(ann, sue)'"),
-      layer: z.string().optional().describe("'agent:<id>' or 'session:<id>' (default: session:default)"),
+      term: z.string().describe("Prolog fact or rule, e.g. 'handles(billing, telegram)' or 'route(X,C) :- handles(X,C)'"),
+      layer: z.string().optional().describe("'agent:<id>' for permanent storage (default: agent:main) or 'session:<id>' for session-scoped ephemeral storage"),
     },
-    async ({ term, layer = "session:default" }) => {
+    async ({ term, layer = "agent:main" }) => {
+      if (!layer.includes(":")) {
+        return { content: [{ type: "text" as const, text: JSON.stringify({ error: "invalid_layer", detail: "layer must be 'agent:<id>' or 'session:<id>'" }) }] };
+      }
       const prefix = layer.split(":")[0];
       if (!cfg.writeableLayers.includes(prefix)) {
         return { content: [{ type: "text" as const, text: JSON.stringify({ error: "layer_readonly", layer }) }] };
@@ -74,18 +77,22 @@ async function main() {
   // ── prolog_retract ────────────────────────────────────────────
   server.tool(
     "prolog_retract",
-    "Retract matching facts from a layer",
+    "Retract matching facts or rules from a layer. Removes from disk and reloads — retraction survives daemon restarts.",
     {
-      term: z.string().describe("Prolog term to retract"),
-      layer: z.string().describe("'agent:<id>' or 'session:<id>'"),
+      term: z.string().describe("Prolog fact or rule head to retract, e.g. 'handles(billing, telegram)'"),
+      layer: z.string().describe("'agent:<id>' or 'session:<id>' — must include the colon and an id"),
     },
     async ({ term, layer }) => {
+      if (!layer.includes(":")) {
+        return { content: [{ type: "text" as const, text: JSON.stringify({ error: "invalid_layer", detail: "layer must be 'agent:<id>' or 'session:<id>'" }) }] };
+      }
       const prefix = layer.split(":")[0];
       if (!cfg.writeableLayers.includes(prefix)) {
         return { content: [{ type: "text" as const, text: JSON.stringify({ error: "layer_readonly", layer }) }] };
       }
       await guard();
-      const result = await http.retract(termToString(term), layer);
+      const filePath = layers.resolvePath(layer);
+      const result = await http.retractFromFile(termToString(term), filePath);
       return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
     }
   );
