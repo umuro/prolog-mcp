@@ -48,24 +48,29 @@ handle_health(_) :- reply_json_dict(_{status: ok}).
 handle_query(Req) :-
     http_read_json_dict(Req, Body, []),
     atom_string(GoalAtom, Body.goal),
-    term_to_atom(Goal, GoalAtom),
+    % atom_to_term preserves source variable names in Bindings (['X'=Var, ...]).
+    % term_to_atom discards them, making dict keys unreadable internal names.
+    atom_to_term(GoalAtom, Goal, Bindings),
     ( get_dict(timeout_ms, Body, TMs) -> TimeoutSec is TMs / 1000 ; TimeoutSec = 5 ),
     ( catch(
         call_with_time_limit(TimeoutSec,
-          aggregate_all(bag(Sol), solve(Goal, Sol), Sols)),
+          aggregate_all(bag(Dict), solve_named(Goal, Bindings, Dict), Dicts)),
         time_limit_exceeded,
         ( reply_json_dict(_{error: timeout, partial: []}) )
       )
-    -> maplist(pairs_to_dict, Sols, Dicts),
-       reply_json_dict(_{solutions: Dicts, exhausted: true})
+    -> reply_json_dict(_{solutions: Dicts, exhausted: true})
     ;  reply_json_dict(_{solutions: [], exhausted: true}) ).
 
-solve(Goal, Pairs) :-
-    copy_term(Goal, GoalCopy),
-    call(GoalCopy),
-    term_variables(Goal, Vars),
-    term_variables(GoalCopy, Vals),
-    maplist([V,Val,K-VS]>>(term_to_atom(V,K), term_string(Val,VS)), Vars, Vals, Pairs).
+solve_named(Goal, Bindings, Dict) :-
+    % copy_term duplicates Goal+Bindings together so the shared variable links
+    % between them are preserved in the copy.
+    copy_term(Goal+Bindings, GoalCopy+BindingsCopy),
+    % Catch existence_error so a query for an abolished/undefined predicate
+    % returns [] instead of HTTP 500.
+    catch(call(GoalCopy), error(existence_error(procedure, _), _), fail),
+    % After call, BindingsCopy vars are bound to the solution values.
+    maplist([Name=Val, Name-VS]>>term_string(Val, VS), BindingsCopy, Pairs),
+    dict_pairs(Dict, _, Pairs).
 
 pairs_to_dict(Pairs, Dict) :-
     pairs_keys_values(Pairs, Ks, Vs),
@@ -102,8 +107,30 @@ handle_load(Req) :-
 handle_reset(Req) :-
     http_read_json_dict(Req, Body, []),
     atom_string(File, Body.path),
-    ( exists_file(File) -> unload_file(File) ; true ),
-    reply_json_dict(_{ok: true, removed: 0}).
+    ( exists_file(File) ->
+        file_terms(File, Terms),
+        length(Terms, Count),
+        % retractall each head pattern so assertz'd + file-loaded clauses are cleared
+        % abolish works on both static (consult-loaded) and dynamic predicates.
+        % retractall/1 throws permission_error on static predicates from consult.
+        maplist([T]>>(functor(T, F, A), catch(abolish(F/A), _, true)), Terms),
+        catch(unload_file(File), _, true)
+    ; Count = 0 ),
+    reply_json_dict(_{ok: true, removed: Count}).
+
+% file_terms(+File, -Terms): read all top-level terms from a .pl file
+file_terms(File, Terms) :-
+    exists_file(File), !,
+    setup_call_cleanup(
+        open(File, read, Stream),
+        read_all_terms(Stream, Terms),
+        close(Stream)).
+file_terms(_, []).
+
+read_all_terms(Stream, Terms) :-
+    read_term(Stream, T, []),
+    ( T == end_of_file -> Terms = []
+    ; Terms = [T | Rest], read_all_terms(Stream, Rest) ).
 
 % layer_to_file(+LayerName, -AbsPath) maps "agent:foo" -> KbDir/agents/foo.pl etc.
 layer_to_file(Layer, File) :-
@@ -122,17 +149,13 @@ handle_list(Req) :-
     http_read_json_dict(Req, Body, []),
     ( get_dict(limit, Body, Limit) -> true ; Limit = 100 ),
     ( get_dict(layer, Body, LayerStr) ->
+        % Read terms directly from the layer file on disk — reliable regardless of
+        % whether facts were loaded via consult or assertz, and avoids the
+        % clause/2 instantiation-error on unbound heads in SWI 9.x.
         atom_string(LayerAtom, LayerStr),
         layer_to_file(LayerAtom, LayerFile),
-        aggregate_all(bag(S),
-          ( clause(H, _),
-            predicate_property(H, defined),
-            catch(
-              ( nth_clause(H, _, Ref),
-                clause_property(Ref, file(LayerFile)) ),
-              _, fail),
-            term_string(H, S) ),
-          All)
+        file_terms(LayerFile, LayerTerms),
+        maplist(term_string, LayerTerms, All)
     ;   aggregate_all(bag(S),
           ( clause(H, _), term_string(H, S) ),
           All)

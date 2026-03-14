@@ -76,7 +76,11 @@ describe.skipIf(SKIP)("PrologHttp integration", () => {
   });
 
   it("listFacts returns only facts from requested layer", async () => {
-    await http.assert("layertest(from_session)", "session:layercheck");
+    // Write to the layer file on disk so file-based listing can find the fact.
+    // Direct assertz (http.assert) has no file association, so layer filter won't see it.
+    const layerFile = path.join(tmpDir, "sessions", "layercheck.pl");
+    fs.writeFileSync(layerFile, "layertest(from_session).\n");
+    await http.loadFile(layerFile);
     const r = await http.listFacts({ layer: "session:layercheck" }) as any;
     expect(r.facts.some((f: string) => f.includes("layertest"))).toBe(true);
     // core facts (parent/2) should NOT appear
@@ -84,10 +88,9 @@ describe.skipIf(SKIP)("PrologHttp integration", () => {
   });
 
   it("listFacts with offset skips leading facts", async () => {
-    // assert 3 distinct facts into a fresh session layer
-    await http.assert("pag(1)", "session:pagination");
-    await http.assert("pag(2)", "session:pagination");
-    await http.assert("pag(3)", "session:pagination");
+    const pagFile = path.join(tmpDir, "sessions", "pagination.pl");
+    fs.writeFileSync(pagFile, "pag(1).\npag(2).\npag(3).\n");
+    await http.loadFile(pagFile);
     const all = await http.listFacts({ layer: "session:pagination" }) as any;
     expect(all.facts.length).toBe(3);
     const paged = await http.listFacts({ layer: "session:pagination", offset: 2 }) as any;
