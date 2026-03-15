@@ -329,6 +329,67 @@ Desynchronize one job by adjusting its period, re-query — conflicts instantly 
 
 ---
 
+## Software Lifecycle Use Cases
+
+The 3 case studies above demonstrate core capabilities. The following 12 use cases show how first-order logic applies across the entire software lifecycle. Each one is a place where Prolog's provable answers beat an LLM's plausible guesses.
+
+Full article: [First-Order Logic in Software Engineering](https://hightechmind.io/ai/first-order-logic/)
+
+### Requirements
+
+**4. Requirements Consistency Checking** — Express requirements as Prolog facts. Query for contradictions. An LLM says "they look fine." Prolog finds the exact conflicting pair.
+
+**5. Cross-Team Interface Contracts** — Team A produces `user_id: string`, Team B expects `user_id: integer`. Query `all_interfaces_valid?` before teams meet. Catch bugs at design time.
+
+**6. Acceptance Criteria as Provable Contracts** — `valid_order(User, Items) :- has_permission(User, create_order), all_items_in_stock(Items), ...` The spec IS the test oracle.
+
+### Architecture & Design
+
+**7. Configuration Constraint Satisfaction** — Port assignments, service placement, resource allocation. Prolog returns every valid configuration; LLMs guess one and miss constraints.
+
+**8. Access Control Matrix Verification** — 8 roles, 40 permissions, escalation rules. Prolog explores every role-path, finds privilege escalations LLMs say "look secure."
+
+**9. State Machine Invariant Verification** — "Can a payment exist without an order?" Prolog explores all transitions, proves impossibility or finds the breaking sequence.
+
+### Implementation
+
+**10. Exhaustive Test Case Generation** — Preconditions as rules → minimal test matrix covering every valid/invalid combination. Zero missed edge cases.
+
+**11. Data Flow Integrity (PII Leak Detection)** — Query `pii_leak(source, sink)?` across 40 services. Get the actual data path, not "review your data flow."
+
+**12. Refactoring Safety** — `equivalent(old, new, Input)?` for every input class. Find the one case where your refactor changes behavior.
+
+### Deployment & Operations
+
+**13. Deployment Ordering** — Topological sort with constraints. Optimal order, safe parallelization, cycle detection.
+
+**14. Cron Conflict Detection** — Every time overlap against shared resource rules. 47 jobs, 12 servers, zero missed conflicts.
+
+### Compliance
+
+**15. Regulatory Compliance** — GDPR/HIPAA/SOC2 as Prolog rules. Query `compliant(my_workflow)?` for provable yes/no. Show output to auditors.
+
+**16. Architectural Debt Detection** — "No service bypasses the API gateway." Six months later, which ones do? Prolog tells you.
+
+---
+
+### Use Case Summary
+
+| Category | Cases |
+|----------|-------|
+| Graph/Relational | Dependency detection, routing, scheduling, agent memory |
+| Requirements | Consistency, contracts, acceptance criteria |
+| Architecture | Config constraints, access control, state invariants |
+| Implementation | Test generation, data flow, refactoring safety |
+| Deployment | Ordering, cron conflicts |
+| Compliance | Regulatory rules, architectural debt |
+
+**The pattern:** every bug that escapes production was a logical relationship nobody verified. Prolog closes that gap — not by guessing better, but by proving.
+
+Full article: [hightechmind.io/ai/first-order-logic](https://hightechmind.io/ai/first-order-logic/)
+
+---
+
 ## Tool Reference
 
 ### prolog_query
