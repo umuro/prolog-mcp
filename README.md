@@ -17,6 +17,8 @@ LLMs hallucinate on structured relational reasoning. They know the rules for mes
 
 This MCP server gives coding agents a small, local, persistent Prolog runtime. The agent authors `.pl` files, asserts facts, queries the knowledge base, and interprets results. SWI-Prolog does the inference — deterministically, without guessing.
 
+> **Background:** [First-Order Logic in Software Engineering](https://hightechmind.io/ai/first-order-logic/) — 16 use cases across the full software lifecycle where provable answers beat plausible guesses.
+
 **What you get:**
 
 - **Conflict detection** — encode cron schedules as facts, query for overlapping periods. No manual interval arithmetic.
